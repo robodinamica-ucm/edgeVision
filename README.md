@@ -180,9 +180,6 @@ python3 agent_billar.py
 
 ---
 
-Aquí tienes el contenido completo estructurado para integrarlo directamente en el README o en la documentación de tu repositorio, formateado de manera profesional y rigurosa:
-
----
 
 ## Hoja de Ruta Temporal (Roadmap)
 
