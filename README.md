@@ -29,6 +29,7 @@ El ecosistema opera dividiendo las responsabilidades en capas estrictamente desa
 
 A continuación se detalla el flujo completo de interacción entre los subsistemas, incluyendo los bucles de percepción, odometría, despacho seguro mediante cola y la máquina de estados con *watchdogs*:
 
+![Arquitectura Integrada del Robotarium](docs/ArquitecturaCompletaRobotariumVisionUnificada.svg)
 ```plantuml
 @startuml
 title Arquitectura Integrada Completa Robotarium
