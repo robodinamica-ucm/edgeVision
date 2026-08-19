@@ -180,10 +180,74 @@ python3 agent_billar.py
 
 ---
 
-## 🧠 Roadmap: Inclusión de IA Avanzada (Próximamente)
+Aquí tienes el contenido completo estructurado para integrarlo directamente en el README o en la documentación de tu repositorio, formateado de manera profesional y rigurosa:
 
-*Este apartado se encuentra en fase de diseño estratégico y definición de especificaciones técnicas:*
+---
 
-* **Percepción Dinámica por Edge AI:** Sustitución o refuerzo del seguimiento por ArUco mediante modelos ligeros de detección de objetos en el borde (YOLOv11-Nano / ByteTrack) para la identificación de blancos móviles y dinámicos en entornos sin GPS (*GPS-Denied*).
-* **Planificación Multi-Agente con GNN y CBF:** Evolución de la navegación reactiva hacia un planificador global basado en Redes Neuronales de Grafos (GNN) y Funciones de Barrera de Control (*Control Barrier Functions - CBF*) para la optimización de flotas de alta densidad y prevención de bloqueos mutuos (*deadlocks*).
-* **Autonomía Compartida y Teleoperación con Retardo:** Integración de un árbitro inteligente (`twist_mux`) capaz de combinar mandos remotos con simulación de latencia espacial y anulación autónoma ante riesgos inminentes de colisión.
+## Hoja de Ruta Temporal (Roadmap)
+
+El plan de trabajo se estructura en un horizonte de tres meses, combinando la consolidación de la infraestructura base con la transición hacia sistemas avanzados de Inteligencia Artificial:
+
+| AGOSTO | SEPTIEMBRE | OCTUBRE |
+| --- | --- | --- |
+| • Apertura UCM (22 Ago)<br>
+
+<br>• Gemelo Digital base<br>
+
+<br>• Codificación Agente IA | • Integración HW real<br>
+
+<br>• Depuración odometría<br>
+
+<br>• Tests Nivel 2 y 3 | • Benchmark IA vs Manual<br>
+
+<br>• Preparación talleres<br>
+
+<br>• Propuesta Defensa/Ind. |
+
+### Detalle Cronológico de Hitos:
+
+* **Semana 1 (Finales de Agosto):**
+* Gestión administrativa: Reclamación y seguimiento de facturas en la secretaría UCM a partir del 22 de agosto.
+* Análisis de código de `vision_pos_agent.py` y cierre de la arquitectura UML.
+* Primera versión del generador sintético para el Gemelo Digital.
+
+
+* **Semana 2 (Principios de Septiembre):**
+* Implementación del pipeline de segmentación en `ai_pos_agent.py`.
+* Integración en el Gemelo Digital y resolución del bug del watchdog de odometría.
+* Pruebas de integración ZMQ en entorno simulado (Nivel 2).
+
+
+* **Semana 3 (Mediados de Septiembre):**
+* Despliegue en el laboratorio físico: calibración de homografía con las siluetas en el suelo.
+* Ejecución de pruebas Hardware-in-the-Loop (Nivel 3).
+
+
+* **Semana 4 (Finales de Septiembre - Octubre):**
+* Ejecución de las sesiones de benchmark (IA frente a Control Manual).
+* Consolidación del demostrador para charlas y talleres formativos institucionales.
+
+
+
+---
+
+## 6. Evolución hacia Proyectos de Industria y Defensa
+
+Esta actividad inicial sienta las bases técnicas indispensables para optar a proyectos de mayor envergadura, transferencia tecnológica y programas de financiación avanzada a nivel nacional e internacional:
+
+### 1. Salto a Defensa y Seguridad (GPS-Denied / Percepción Táctica)
+
+* **Evolución:** Las siluetas estáticas se sustituyen por modelos de detección de objetos dinámicos avanzados (`YOLOv11-Nano / ByteTrack`) ejecutados en el borde (*Edge AI*).
+* **Aplicación:** Demostrador de apoyo aéreo táctico (la cámara cenital actúa como dron ISR — *Intelligence, Surveillance and Reconnaissance*) coordinando interceptores terrestres autónomos (rovers) en zonas sin cobertura satelital.
+* **Vía de Financiación:** Programa COINCIDENTE (Ministerio de Defensa de España) y convocatorias de innovación de la aceleradora de la OTAN DIANA.
+
+### 2. Salto a Industria 4.0 (Orquestación de Flotas AMR)
+
+* **Evolución:** La evasión reactiva simple de obstáculos evoluciona hacia un planificador multi-robot basado en Redes Neuronales de Grafos (GNN) y Funciones de Barrera de Control (*Control Barrier Functions - CBF*).
+* **Aplicación:** Gestión optimizada de tráfico para almacenes robotizados de alta densidad, eliminando colisiones y bloqueos mutuos (*deadlocks*).
+* **Vía de Financiación:** Ayudas CDTI NEOTEC, ENISA y transferencia directa de tecnología a empresas de intralogística y automatización.
+
+### 3. Salto a Teleoperación con Autonomía Compartida
+
+* **Evolución:** El banco de pruebas de control manual se complementa con un módulo de predicción de trayectorias basado en redes LSTM y un árbitro inteligente (`twist_mux`).
+* **Aplicación:** Asistencia activa al operador para misiones críticas con alta latencia de comunicación (control de robots de desactivación de explosivos o exploración remota en entornos hostiles).
