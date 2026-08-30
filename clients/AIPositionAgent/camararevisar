@@ -1,0 +1,115 @@
+import cv2
+import numpy as np
+import time
+
+# --- Configuración de Resoluciones ---
+# Cada cámara grabará en Full HD estándar (1920x1080)
+CAM_WIDTH = 1920
+CAM_HEIGHT = 1080
+FPS = 30
+
+# Nombres de los archivos de salida en formato MP4
+OUTPUT_CAM_A = "camara_a_simulada.mp4"
+OUTPUT_CAM_B = "camara_b_simulada.mp4"
+
+# --- Dimensiones de la Súper Arena Virtual (Tatami Completo) ---
+# Sumamos las dos cámaras pero dejamos un solape de 400 píxeles en el centro
+SOLAPE = 400
+ARENA_WIDTH = (CAM_WIDTH * 2) - SOLAPE  # 1920 + 1920 - 400 = 3440 píxeles de ancho
+ARENA_HEIGHT = CAM_HEIGHT               # 1080 píxeles de alto
+
+def generar_doble_camara_simulada():
+    print("Iniciando Generador de Doble Cámara Simulada Full HD (.mp4)...")
+    print(f"Resolución Arena Virtual: {ARENA_WIDTH}x{ARENA_HEIGHT}")
+    print("Presiona Ctrl+C en la terminal para detener y guardar ambos videos.")
+
+    # --- Configuración de los VideoWriters ---
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out_a = cv2.VideoWriter(OUTPUT_CAM_A, fourcc, FPS, (CAM_WIDTH, CAM_HEIGHT))
+    out_b = cv2.VideoWriter(OUTPUT_CAM_B, fourcc, FPS, (CAM_WIDTH, CAM_HEIGHT))
+
+    if not out_a.isOpened() or not out_b.isOpened():
+        print("[ERROR] No se pudieron inicializar los VideoWriters de las cámaras.")
+        return
+
+    # --- Configuración de los Obstáculos Móviles en el espacio de la Súper Arena ---
+    # Obstáculo 1 (Círculo grande)
+    obs1_x, obs1_y = 500, 500
+    vel1_x, vel1_y = 16, 10  # Velocidades adaptadas al mapa gigante de 3440px
+
+    # Obstáculo 2 (Cuadrado mediano)
+    obs2_x, obs2_y = 2800, 300
+    vel2_x, vel2_y = -14, 12
+
+    # --- DISEÑO DEL ARUCO SIMULADO (Robot en el centro de la pista, zona de solape) ---
+    # Lo colocamos justo en la mitad horizontal de la súper arena (X = 1720) para que lo vean AMBAS cámaras
+    #La Cámara A recortará y guardará la mitad izquierda de la pista.La Cámara B recortará y guardará la mitad derecha de la pista, pero con un área de solape (overlap) en el centro
+    aruco_bgr = np.zeros((120, 120, 3), dtype=np.uint8) 
+    cv2.rectangle(aruco_bgr, (22, 22), (98, 98), (255, 255, 255), -1) 
+    cv2.rectangle(aruco_bgr, (37, 37), (59, 59), (0, 0, 0), -1)
+    cv2.rectangle(aruco_bgr, (74, 74), (96, 96), (0, 0, 0), -1)
+
+    frame_count = 0
+
+    try:
+        while True:
+            # 1. Crear el fondo oscuro de la Súper Arena Completa
+            arena = np.ones((ARENA_HEIGHT, ARENA_WIDTH, 3), dtype=np.uint8) * 40
+
+            # 2. Insertar el Robot ArUco fijo exactamente en la zona de solape central
+            # Coordenadas X: de 1660 a 1780 (Centrado en el píxel 1720 de la súper arena)
+            arena[480:600, 1660:1780] = aruco_bgr
+
+            # 3. ACTUALIZAR Y DIBUJAR OBSTÁCULO MÓVIL 1 (Círculo Blanco)
+            obs1_x += vel1_x
+            obs1_y += vel1_y
+            if obs1_x < 80 or obs1_x > ARENA_WIDTH - 80: vel1_x *= -1
+            if obs1_y < 80 or obs1_y > ARENA_HEIGHT - 80: vel1_y *= -1
+            cv2.circle(arena, (obs1_x, obs1_y), 70, (255, 255, 255), -1)
+
+            # 4. ACTUALIZAR Y DIBUJAR OBSTÁCULO MÓVIL 2 (Cuadrado Blanco)
+            obs2_x += vel2_x
+            obs2_y += vel2_y
+            if obs2_x < 90 or obs2_x > ARENA_WIDTH - 90: vel2_x *= -1
+            if obs2_y < 90 or obs2_y > ARENA_HEIGHT - 90: vel2_y *= -1
+            cv2.rectangle(arena, (obs2_x - 50, obs2_y - 50), (obs2_x + 50, obs2_y + 50), (255, 255, 255), -1)
+
+            # 5. DIBUJAR OBSTÁCULOS FIJOS (Uno en el extremo izquierdo y otro en el derecho)
+            cv2.circle(arena, (400, 200), 60, (255, 255, 255), -1)        # Solo lo verá la Cámara A
+            cv2.rectangle(arena, (3000, 800), (3250, 880), (255, 255, 255), -1) # Solo lo verá la Cámara B
+
+            # =========================================================================
+            # --- MAGIA DEL SIMULADOR: RECORTE GEOMÉTRICO DE LAS CÁMARAS ---
+            # =========================================================================
+            # Cámara A: Recorta desde la esquina izquierda (X=0) hasta el ancho 1920
+            frame_a = arena[0:CAM_HEIGHT, 0:CAM_WIDTH].copy()
+
+            # Cámara B: Recorta desde el píxel final hacia atrás (desde X = ARENA_WIDTH - 1920 hasta el final)
+            inicio_x_b = ARENA_WIDTH - CAM_WIDTH # 3440 - 1920 = 1520
+            frame_b = arena[0:CAM_HEIGHT, inicio_x_b:ARENA_WIDTH].copy()
+
+            # Añadimos un pequeño texto informativo opcional en la esquina para identificarlas
+            cv2.putText(frame_a, "CAMARA A (IZQUIERDA)", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+            cv2.putText(frame_b, "CAMARA B (DERECHA)", (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (100, 100, 100), 2)
+
+            # 6. GRABAR LOS FOTOGRAMAS EN SUS RESPECTIVOS VIDEOS MP4
+            out_a.write(frame_a)
+            out_b.write(frame_b)
+            frame_count += 1
+
+            # Sincronización exacta a 30 FPS
+            time.sleep(1.0 / FPS)
+
+    except KeyboardInterrupt:
+        print(f"\nSimulación finalizada por el usuario. Frames procesados: {frame_count}")
+    
+    finally:
+        # Cerramos ambos contenedores de video de forma segura
+        out_a.release()
+        out_b.release()
+        print(f"¡Vídeos guardados con éxito!")
+        print(f" -> Izquierda: '{OUTPUT_CAM_A}'")
+        print(f" -> Derecha:   '{OUTPUT_CAM_B}'")
+
+if __name__ == "__main__":
+    generar_doble_camara_simulada()
