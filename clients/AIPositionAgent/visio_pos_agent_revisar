@@ -1,0 +1,305 @@
+import argparse
+import cv2
+import numpy as np
+import base64
+import json
+import time
+import logging
+from threading import Thread
+from agent import Agent, Device
+from logger_config import setup_logger
+import os
+
+# Dimensiones máximas de tu sistema de visión
+MAX_WIDTH = 1280
+MAX_HEIGHT = 720
+
+class VisionPosDevice:
+    def __init__(self, agent: Agent) -> None:
+        self.agent = agent
+        self.running = False
+        self.gui = True
+        
+        # --- CONFIGURACIÓN DE LAS DOS CÁMARAS SIMULADAS ---
+        self.cap_a = cv2.VideoCapture("camara_a_simulada.mp4")
+        self.cap_a.set(cv2.CAP_PROP_FPS, 30)
+        
+        self.cap_b = cv2.VideoCapture("camara_b_simulada.mp4")
+        self.cap_b.set(cv2.CAP_PROP_FPS, 30)
+        
+        # Dimensiones estimadas del mosaico
+        self.total_w = MAX_WIDTH
+        self.total_h = MAX_HEIGHT
+        
+        # Carga de archivos de calibración y configuración
+        self.H = np.load("homography_matrix.npy")
+        self.boundaries_path = os.path.join(os.path.dirname(__file__), "tatami_config.json")
+        self.boundaries = None
+        self.M_trans = None
+        self.load_arena_boundaries()
+        
+        # Parámetros de stitching
+        self.offset_x = 0
+        self.offset_y = 0
+
+        # Configuración ArUco (Diccionario 4x4)
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        
+        if hasattr(cv2.aruco, 'DetectorParameters_create'):
+            self.aruco_params = cv2.aruco.DetectorParameters_create()
+        else:
+            self.aruco_params = cv2.aruco.DetectorParameters()
+            
+        # Mejoras de detección para marcadores pequeños en cenital
+        self.aruco_params.adaptiveThreshWinSizeMin = 3
+        self.aruco_params.adaptiveThreshWinSizeMax = 25
+        self.aruco_params.adaptiveThreshWinSizeStep = 5
+        self.aruco_params.minMarkerPerimeterRate = 0.01
+        
+        # Crear el detector ArUco moderno si está disponible
+        if hasattr(cv2.aruco, 'ArucoDetector'):
+            self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        else:
+            self.detector = None
+            
+        logger.info("VisionPosDevice inicializado correctamente con doble entrada de vídeo simulada.")
+            
+    def load_arena_boundaries(self):
+        """Intenta cargar los límites guardados localmente desde un archivo JSON."""
+        if os.path.exists(self.boundaries_path):
+            try:
+                with open(self.boundaries_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                limites = data["boundaries"]
+                logger.critical(f"Boundaries: {limites}")
+                puntos = limites["points"]
+                all_x = [p["x"] for p in puntos]
+                all_y = [p["y"] for p in puntos]
+                self.M_trans = np.array(data["M_pixel_to_real"])
+                self.boundaries = {
+                    "x_min": min(all_x),
+                    "x_max": max(all_x),
+                    "y_min": min(all_y),
+                    "y_max": max(all_y)
+                }
+                logger.critical(f"Límites del tatami cargados localmente: {self.boundaries}")
+                logger.critical(f"Matriz pixel2cm: {self.M_trans}")
+            except Exception as e:
+                logger.error(f"Error cargando los límites del tatami desde JSON: {e}")
+        else:
+            logger.warning(f"No se encontró el archivo de límites {self.boundaries_path}. Se usarán coordenadas crudas de píxeles.")
+    
+    def connect(self) -> None:
+        logger.info(f"[INFO] Agente {self.agent.id} conectado y esperando video...")
+    
+    def start(self):
+        self.running = True
+        self.thread = Thread(target=self.loop, daemon=True)
+        self.thread.start()
+        logger.info("Bucle principal de Visión + Posición iniciado.")
+
+    def stop(self):
+        self.running = False
+        if hasattr(self, 'thread'):
+            self.thread.join()
+        self.cap_a.release()
+        self.cap_b.release()
+        cv2.destroyAllWindows()
+        logger.info("Dispositivo detenido y cámaras liberadas.")
+
+    def loop(self):
+        try:
+            while self.running:
+                # 1. Captura de imágenes de ambos flujos de vídeo simulados
+                ret_a, frame_a = self.cap_a.read()
+                ret_b, frame_b = self.cap_b.read()
+
+                # --- REINICIO DE BUCLE SINCRONIZADO ---
+                if not ret_a or not ret_b:
+                    self.cap_a.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    self.cap_b.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret_a, frame_a = self.cap_a.read()
+                    ret_b, frame_b = self.cap_b.read()
+
+                if not ret_a or not ret_b:
+                    logger.warning("Fallo al capturar frame de alguna de las cámaras.")
+                    time.sleep(0.01)
+                    continue
+                else:
+                    h_a, w_a, _ = frame_a.shape
+                    h_b, w_b, _ = frame_b.shape
+                    
+                    # --- CALCULAR OFFSET PARA EVITAR NEGROS ---
+                    esquinas_b = np.array([[0,0],[w_b,0],[w_b,h_b],[0,h_b]], dtype=np.float32).reshape(-1,1,2)
+                    esquinas_b_trans = cv2.perspectiveTransform(esquinas_b, self.H)
+
+                    x_min = min(0, np.min(esquinas_b_trans[:,:,0]))
+                    y_min = min(0, np.min(esquinas_b_trans[:,:,1]))
+                    x_max = max(w_a, np.max(esquinas_b_trans[:,:,0]))
+                    y_max = max(h_a, np.max(esquinas_b_trans[:,:,1]))
+
+                    offset_x = -int(x_min)
+                    offset_y = -int(y_min)
+                    nuevo_w = int(x_max - x_min)
+                    nuevo_h = int(y_max - y_min)
+
+                    H_offset = self.H.copy()
+                    H_offset[0,2] += offset_x
+                    H_offset[1,2] += offset_y
+
+                    # --- CREAR LIENZO Y UNIR (MOSAICO) ---
+                    canvas = np.zeros((nuevo_h, nuevo_w, 3), dtype=np.uint8)
+                    canvas[offset_y:offset_y+h_a, offset_x:offset_x+w_a] = frame_a
+
+                    frame_b_warped = cv2.warpPerspective(frame_b, H_offset, (nuevo_w, nuevo_h))
+                    mask = frame_b_warped > 0
+                    canvas[mask] = frame_b_warped[mask]
+
+                    # --- REDIMENSIONAR PARA AJUSTAR A LA PANTALLA ---
+                    def rescale_frame(frame, max_w, max_h):
+                        alto, ancho = frame.shape[:2]
+                        escala = min(max_w / ancho, max_h / alto)
+                        nuevo_ancho = int(ancho * escala)
+                        nuevo_alto = int(alto * escala)
+                        return cv2.resize(frame, (nuevo_ancho, nuevo_alto), interpolation=cv2.INTER_AREA)
+
+                    canvas_red = rescale_frame(canvas, MAX_WIDTH, MAX_HEIGHT)
+
+                # --- 2. DETECCIÓN ARUCO LOCAL (ROBOTS) ---
+                gray = cv2.cvtColor(canvas_red, cv2.COLOR_BGR2GRAY)
+
+                if self.detector is not None:
+                    corners, ids, rejected = self.detector.detectMarkers(gray)
+                else:
+                    corners, ids, rejected = cv2.aruco.detectMarkers(
+                        gray, self.aruco_dict, parameters=self.aruco_params
+                    )
+
+                if ids is not None:
+                    if self.gui:
+                        cv2.aruco.drawDetectedMarkers(canvas_red, corners, ids)
+
+                    # Iteramos y enviamos la posición de cada robot de forma individual
+                    for i in range(len(ids)):
+                        marker_id = int(ids[i][0])
+                        c = corners[i][0]
+                        
+                        # Centro en píxeles y transformación a centímetros reales
+                        center_x = float(np.mean(c[:, 0]))
+                        center_y = float(np.mean(c[:, 1]))
+                        pt_pixel = np.array([[[center_x, center_y]]], dtype=np.float32)
+                        
+                        if self.M_trans is not None:
+                            pt_real = cv2.perspectiveTransform(pt_pixel, self.M_trans)[0][0]
+                            real_x = pt_real[0]
+                            real_y = pt_real[1]
+                        else:
+                            real_x = center_x
+                            real_y = center_y
+
+                        # Calcular orientación (theta) en radianes
+                        v = c[1] - c[0]
+                        theta = float(np.arctan2(v[1], v[0]))
+
+                        payload = {
+                            "x": round(float(real_x), 2),
+                            "y": round(float(real_y), 2),
+                            "yaw": round(float(theta), 3),
+                            "timestamp": time.time()
+                        }
+                        
+                        robot_id = int(marker_id)
+                        target_topic = f"{robot_id}/pos"
+                        self.agent.send(target_topic, payload)
+                        logger.debug(f"Enviada posición individual del Robot {robot_id}: {payload}")
+
+                # --- 3. DETECCIÓN DE OBSTÁCULOS BLANCOS ---
+                _, thresh_blanco = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY)
+                
+                # Borramos las etiquetas ArUco de los robots para no considerarlas obstáculos
+                if ids is not None:
+                    for c_aruco in corners:
+                        cv2.fillPoly(thresh_blanco, [c_aruco[0].astype(np.int32)], 0)
+
+                # Buscamos los contornos de los obstáculos blancos independientes
+                contornos, _ = cv2.findContours(thresh_blanco, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                obstaculos_payload = []
+                
+                for idx, contorno in enumerate(contornos):
+                    area = cv2.contourArea(contorno)
+                        # Filtro de escala: Descarta ruido digital pequeño y reflejos gigantes
+                if 100 < area < 35000:
+                            M = cv2.moments(contorno)
+                            if M["m00"] != 0:
+                                obs_cx = float(M["m10"] / M["m00"])
+                                obs_cy = float(M["m01"] / M["m00"])
+                                
+                                pt_pixel_obs = np.array([[[obs_cx, obs_cy]]], dtype=np.float32)
+                                if self.M_trans is not None:
+                                    pt_real_obs = cv2.perspectiveTransform(pt_pixel_obs, self.M_trans)
+                                    real_obs_x = pt_real_obs[0][0][0]
+                                    real_obs_y = pt_real_obs[0][0][1]
+                                else:
+                                    real_obs_x = obs_cx
+                                    real_obs_y = obs_cy
+                                
+                                radio_aprox = round(float(np.sqrt(area / np.pi)), 1)
+                                
+                                obstaculos_payload.append({
+                                    "id_obs": idx,
+                                    "x": round(float(real_obs_x), 2),
+                                    "y": round(float(real_obs_y), 2),
+                                    "radius_pixels": radio_aprox
+                                })
+                                
+                                if self.gui:
+                                    cv2.drawContours(canvas_red, [contorno], -1, (255, 0, 0), 2)
+                                    cv2.circle(canvas_red, (int(obs_cx), int(obs_cy)), 5, (0, 0, 255), -1)
+
+                if obstaculos_payload:
+                    self.agent.send("map/obstacles", {"obstacles": obstaculos_payload, "timestamp": time.time()})
+
+                # --- 4. VISUALIZACIÓN EN VIVO DEL MOSAICO SIMULADO ---
+                if self.gui:
+                    cv2.imshow("Robotarium Cenital - Mosaico de Doble Camara Simulada", canvas_red)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+
+                # Limitamos la frecuencia para equilibrar el procesamiento del sistema
+                time.sleep(0.03)
+
+        except Exception as e:
+            logger.error(f"Error crítico en el bucle integrado: {e}", exc_info=True)
+        finally:
+            self.stop()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--no-gui', action='store_true', help="Ejecutar sin ventana de video local")
+    args = parser.parse_args()
+
+    fname = f"vision_pos_agent_log_{time.strftime('%Y%m%d_%H%M%S')}"
+    logger = setup_logger(fname, console_level=logging.INFO)
+
+    # Instanciamos el Agente centralizado con los parámetros de tu red
+    agente_integrado = Agent(
+        device_class=VisionPosDevice, 
+        id="VisionPosSystem05", 
+        ip="127.0.0.1",       # IP donde el Agente publicará sus datos
+        data_port=5559,       # Puerto PUB del Agente
+        hub_ip="127.0.0.1"    # IP del Hub central
+    )
+
+    agente_integrado.device.gui = not args.no_gui
+    
+    # Arrancamos el bucle asíncrono
+    agente_integrado.device.start()
+
+    # Mantenemos vivo el proceso en la consola
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Apagando agente integrado...")
+        agente_integrado.device.stop()
